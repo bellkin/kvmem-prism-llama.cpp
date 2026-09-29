@@ -19,22 +19,6 @@ static __global__ void gdn_precompute_exp(const float * g, float * g_exp, int64_
     }
 }
 
-template <int rows, int width>
-static __device__ __forceinline__ float gdn_delta_f32(
-        const float (&state)[rows], const float (&key)[rows], float decay, float value, float beta) {
-    float partial = 0.0f;
-#pragma unroll
-    for (int r = 0; r < rows; ++r) {
-        partial += state[r] * key[r];
-    }
-    const float dot = warp_reduce_sum<width>(partial);
-    return (value - decay * dot) * beta;
-}
-
-static __device__ __forceinline__ float gdn_update_f32(float state, float key, float decay, float delta) {
-    return decay * state + key * delta;
-}
-
 // RAW: beta and g arrive pre-activation (ggml_gated_delta_net_set_raw_gates); the kernel applies
 // sigmoid(beta) and raw_a[h] * softplus(g + raw_dt_bias[h]) with the unary kernels' formulas.
 // G_PRECOMPUTED: g already holds exp(g) (GB10 long-prompt path); only used with RAW == false.

@@ -126,6 +126,8 @@ public:
     // per layer
     std::vector<ggml_tensor *> r_l;
     std::vector<ggml_tensor *> s_l;
+    // per-layer-embedding conv rows; empty on models without PLE layers (kvmem adapter accounts over this)
+    std::vector<ggml_tensor *> p_l;
 
 private:
     //const llama_model & model;
