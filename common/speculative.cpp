@@ -2108,6 +2108,9 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
     std::vector<llama_sampler *> backend_chains;
 
     int32_t n_embd = 0;
+    std::vector<llama_pos> logical_pos;
+    std::vector<llama_pos> synced_rows;
+    std::vector<llama_pos> verify_start;
 
     // One MTP draft driver, three modes (set once in the ctor):
     //   is_mem_shared (gemma4): shares the target KV, runs all heads in one graph.
@@ -2162,6 +2165,11 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
         // TODO: fix, how to call without malloc
         batch.token = (llama_token *) malloc(sizeof(llama_token) * n_b);
 
+        logical_pos.resize(n_b);
+        batch.logical_pos = logical_pos.data();
+        synced_rows.assign(n_seq, 0);
+        verify_start.assign(n_seq, 0);
+
         smpls.resize(n_seq);
         for (auto & s : smpls) {
             common_params_sampling sparams;
@@ -2190,7 +2198,10 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
         llama_set_embeddings_nextn(ctx_tgt, true, /*masked*/ false);
         llama_set_embeddings_nextn(ctx_dft, true, /*masked*/ true);
 
-        is_mem_shared = llama_get_ctx_other(ctx_dft) == ctx_tgt;
+        // ctx_other is also set for Qwen MTP so the KVMem factory can follow
+        // the target slot-pool. Shared-KV (Gemma4) is the same memory object.
+        is_mem_shared = llama_get_ctx_other(ctx_dft) == ctx_tgt
+                && llama_get_memory(ctx_dft) == llama_get_memory(ctx_tgt);
         chain_heads   = n_mtp_layers > 1 && !is_mem_shared;
 
         if (chain_heads) {
@@ -2239,7 +2250,8 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
         }
 
         auto * ctx_dft = this->params.ctx_dft;
-        const llama_pos pos_max = llama_memory_seq_pos_max(llama_get_memory(ctx_dft), seq_id);
+        const llama_pos pos_max = std::find(prompt.begin(), prompt.end(), LLAMA_TOKEN_NULL) != prompt.end()
+                ? synced_rows[seq_id] - 1 : llama_memory_seq_pos_max(llama_get_memory(ctx_dft), seq_id);
 
         if (pos_max < N - 1 && !is_mem_shared) {
             SPC_WRN("ctx_dft pos_max=%d < N-1=%d - "
@@ -2255,10 +2267,7 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
             return true;
         }
 
-        // TODO: how to make it work with vision tokens?
-        if (batch_in.token == nullptr || batch_in.embd != nullptr) {
-            return true;
-        }
+        if (!batch_in.token && !batch_in.embd) return false;
 
         const int32_t n_tokens = batch_in.n_tokens;
 
@@ -2289,7 +2298,8 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
             common_batch_clear(batch);
 
             for (int k = 0; k < n_tokens; ++k) {
-                common_batch_add(batch, batch_in.token[k], batch_in.pos[k], { batch_in.seq_id[k][0] }, 0);
+                common_batch_add(batch, batch_in.token ? batch_in.token[k] : 0, batch_in.pos[k], { batch_in.seq_id[k][0] }, 0);
+                batch.logical_pos[k] = batch_in.logical_pos ? batch_in.logical_pos[k] : batch_in.pos[k];
             }
 
             // shift the tgt embeddings to the right by one position
@@ -2315,6 +2325,13 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                 set_h(i_batch_beg[seq_id], pending_h[seq_id].data());
             }
 
+            llama_batch sync_batch = batch;
+            sync_batch.embd_nextn = batch.embd;
+            if (!batch_in.token) {
+                sync_batch.token = nullptr;
+                sync_batch.embd = batch_in.embd;
+                sync_batch.pos = batch_in.pos;
+            }
             auto * mem_dft = llama_get_memory(ctx_dft);
 
             bool ok = true;
@@ -2330,7 +2347,7 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                     llama_set_nextn_layer_offset(ctx_dft, head);
                 }
 
-                const int32_t rc = llama_decode(ctx_dft, batch);
+                const int32_t rc = llama_decode(ctx_dft, sync_batch);
                 if (rc != 0) {
                     SPC_ERR("llama_decode(ctx_dft) head=%d failed rc=%d (pos=%d)\n",
                             head, (int) rc, (int) batch_in.pos[0]);
@@ -2354,6 +2371,9 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
 
             const int32_t n_rows = i_batch_end[seq_id] - i_batch_beg[seq_id] + 1;
             verify_h_rows[seq_id] = n_rows;
+            const int first = i_batch_beg[seq_id];
+            verify_start[seq_id] = batch_in.logical_pos ? batch_in.logical_pos[first] : batch_in.pos[first];
+            synced_rows[seq_id] = verify_start[seq_id] + n_rows;
             verify_h[seq_id].resize((size_t) n_rows * n_embd);
 
             for (int32_t i = 0; i < n_rows; ++i) {
@@ -2530,9 +2550,28 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
         }
 
         const int32_t i_h = std::min<int32_t>(n_accepted, n_rows - 1);
+        synced_rows[seq_id] = verify_start[seq_id] + i_h + 1;
         const size_t row_bytes = (size_t) n_embd * sizeof(float);
         std::memcpy(pending_h[seq_id].data(), verify_h[seq_id].data() + (size_t) i_h * n_embd, row_bytes);
     }
+    bool get_state(llama_seq_id seq_id, std::vector<uint8_t> & data) const override {
+        if (seq_id < 0 || (uint32_t) seq_id >= n_seq) return false;
+        data.resize(sizeof(llama_pos) + (size_t) n_embd*sizeof(float));
+        std::memcpy(data.data(), &synced_rows[seq_id], sizeof(llama_pos));
+        std::memcpy(data.data() + sizeof(llama_pos), pending_h[seq_id].data(), (size_t) n_embd*sizeof(float));
+        return true;
+    }
+
+    void set_state(llama_seq_id seq_id, const std::vector<uint8_t> & data) override {
+        if (seq_id < 0 || (uint32_t) seq_id >= n_seq) return;
+        if (data.size() != sizeof(llama_pos) + (size_t) n_embd*sizeof(float)) {
+            throw std::runtime_error("invalid MTP carry state");
+        }
+        std::memcpy(&synced_rows[seq_id], data.data(), sizeof(llama_pos));
+        std::memcpy(pending_h[seq_id].data(), data.data() + sizeof(llama_pos), (size_t) n_embd*sizeof(float));
+        verify_h_rows[seq_id] = 0;
+    }
+
 };
 
 // state of self-speculation (simple implementation, not ngram-map)
