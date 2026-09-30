@@ -64,10 +64,10 @@ is required there. The unsloth Q4_K GGUF has one and works without the flag.
   budget sizes the GPU working set; eviction + retrieval happen when the
   prompt exceeds it). A budget that is too small (e.g. 1024) can stage the
   right block yet still degrade answer quality.
-- Server MTP: `--spec-type draft-mtp` (welded-nextn models only; the server
-  has no sidecar flag). With split CPU/GPU layers also pass
-  `--kvmem-mtp-state snapshots` — the default `replay` mode requires all GDN
-  layers on GPU.
+- Server MTP: `--spec-type draft-mtp`, with `--spec-draft-model /path/to/mtp.gguf`
+  for models without a welded nextn layer (e.g. bonsai PTQ1_0). With split
+  CPU/GPU layers also pass `--kvmem-mtp-state snapshots` — the default
+  `replay` mode requires all GDN layers on GPU.
 
 ## Troubleshooting
 
