@@ -57,6 +57,27 @@ MTP speculative decoding takes a sidecar GGUF:
 ... --spec-type draft-mtp --spec-draft-model /path/to/mtp-Q4_0.gguf --spec-draft-n-max 3
 ```
 
+The draft can run on a different device than the main model, e.g. an
+integrated GPU through the Vulkan backend (requires `GGML_VULKAN=ON`,
+which the wrapper enables by default):
+
+```sh
+... --spec-draft-device Vulkan1
+```
+
+### Devices
+
+| Component | Flag | Notes |
+|---|---|---|
+| main model | `--device CUDA0` (also `-dev`) | comma-separated list for multi-GPU |
+| MTP draft | `--spec-draft-device Vulkan1` | empty = same device as main |
+| vision projector (server) | `-mmdev, --mmproj-device Vulkan1` | needs `--mmproj` |
+
+Verified on a mixed setup: main on CUDA0, MTP draft and mmproj on an
+AMD iGPU via Vulkan - drafting holds a ~90% accept rate and vision
+encoding works, with the iGPU observed busy during both. The wrapper
+builds with both CUDA and Vulkan enabled.
+
 Note: the bonsai PTQ1_0 GGUF has no welded nextn layer, so `--spec-draft-model`
 is required there. The unsloth Q4_K GGUF has one and works without the flag.
 

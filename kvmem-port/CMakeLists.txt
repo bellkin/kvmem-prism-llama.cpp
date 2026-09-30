@@ -25,6 +25,7 @@ set(LLAMA_KVMEM     ON            CACHE BOOL "" FORCE)
 set(LLAMA_KVMEM_ROOT "${KVMEM_ROOT}" CACHE PATH "" FORCE)
 
 set(GGML_CUDA            ON    CACHE BOOL "" FORCE)
+set(GGML_VULKAN          ON    CACHE BOOL "" FORCE)
 # RTX 5070 (Blackwell, sm_120); also feeds the kvmem stagein target's CUDA_ARCHITECTURES
 set(CMAKE_CUDA_ARCHITECTURES "120" CACHE STRING "" FORCE)
 
