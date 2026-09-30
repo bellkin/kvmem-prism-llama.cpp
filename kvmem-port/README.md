@@ -117,6 +117,36 @@ round closes its thinking block and returns `finish_reason=length`.
   CPU/GPU layers also pass `--kvmem-mtp-state snapshots` — the default
   `replay` mode requires all GDN layers on GPU.
 
+### Running coding agents against the server
+
+Coding agents (pi, opencode, Claude Code-style) send very long system
+prompts (often 5k-20k tokens). Unlike llama-server, whose KV cache keeps
+the whole prompt resident, the kvmem pool only guarantees
+`--kvmem-sink-tokens` (default: one 128-token block) of the prefix; the
+rest of the system prompt is ordinary pool blocks that eviction can drop,
+and retrieval only brings back blocks that score against the latest user
+message. Mid-session the model then sees a different, partial system
+prompt every turn — symptoms include drifting behavior, denying its own
+instructions, or quoting prompt fragments back.
+
+Pin the system prompt so agent behavior matches llama-server:
+
+```sh
+./build/bin/llama-kvmem-server -m model.gguf --device CUDA0 -ngl 12 \
+    -c 65536 --kvmem-budget 8192 --kvmem-sink-tokens 8192 --port 8080
+```
+
+- Set `--kvmem-sink-tokens` >= the agent's system prompt length (and
+  <= budget). Everything past the sink is still retrievable on demand.
+- Verified: with sink smaller than the system prompt, a model asked to
+  quote a segment deep in its system prompt hallucinates a denial; with
+  sink covering it, the quote is verbatim.
+- If the agent rewrites part of its system prompt per request (e.g. a
+  changing `<system-hint>` line), the cross-request prefix reuse drops to
+  zero and every turn re-prefills — slower, but not incorrect.
+- If a request fails with `failed to find a memory slot for batch`, the
+  budget is too small for the batch; raise `--kvmem-budget`.
+
 ## Troubleshooting
 
 - `failed to create context ... GDN replay requires ...` — use
