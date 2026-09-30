@@ -30,7 +30,16 @@ cmake --build build -j --target llama-kvmem-cli llama-kvmem-server
 Binaries land in `build/bin/`.
 
 - `CMAKE_CUDA_ARCHITECTURES` defaults to `120` (RTX 5070 / Blackwell); override
-  for other GPUs, e.g. `-DCMAKE_CUDA_ARCHITECTURES="80;90"`.
+  for other GPUs, e.g. `-DCMAKE_CUDA_ARCHITECTURES="80;90"` or `"75"` for Turing.
+
+## Architecture support
+
+Turing (sm_75) and newer are supported. The full `llama` library, including the
+kvmem stage-in kernels and the Gated Delta Net kernels, compiles for sm_75.
+GDN uses a conservative `cols_per_warp=1` config below Ampere, and flash
+attention picks the vector kernel for quantized-KV decode on Turing (prefill
+with quantized KV dequantizes to f16 for the MMA path), so functionality is
+preserved with some performance cost on older cards.
 - `GGML_CUDA_FA_QUANTS=all` is forced on (quantized-KV flash attention used by
   the kvmem path).
 

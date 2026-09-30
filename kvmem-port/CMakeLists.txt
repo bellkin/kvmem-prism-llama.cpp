@@ -25,8 +25,6 @@ set(LLAMA_KVMEM     ON            CACHE BOOL "" FORCE)
 set(LLAMA_KVMEM_ROOT "${KVMEM_ROOT}" CACHE PATH "" FORCE)
 
 set(GGML_CUDA            ON    CACHE BOOL "" FORCE)
-# quantized-KV flash attention (q8_0 KV cache on the kvmem path needs this)
-set(GGML_CUDA_FA_QUANTS  "all" CACHE STRING "" FORCE)
 # RTX 5070 (Blackwell, sm_120); also feeds the kvmem stagein target's CUDA_ARCHITECTURES
 set(CMAKE_CUDA_ARCHITECTURES "120" CACHE STRING "" FORCE)
 
