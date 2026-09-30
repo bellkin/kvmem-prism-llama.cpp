@@ -81,6 +81,24 @@ builds with both CUDA and Vulkan enabled.
 Note: the bonsai PTQ1_0 GGUF has no welded nextn layer, so `--spec-draft-model`
 is required there. The unsloth Q4_K GGUF has one and works without the flag.
 
+### Auto-continue-thinking (long reasoning chains)
+
+A reasoning round that hits its output budget with the thinking block still
+open is continued automatically: the server keeps the chain in context,
+injects a cue, and starts the next round, until the model emits
+`</think>`/EOS or the safety caps kick in.
+
+```sh
+./build/bin/llama-kvmem-server ... --auto-continue-thinking --enable-thinking
+```
+
+Companion flags: `--act-max-rounds N` (default 8), `--act-round-tokens N`
+(per-round budget, 0 = request max_tokens), `--act-total-tokens N`,
+`--act-continue-cue STR`, `--act-prefill-mode auto|legacy|restart`,
+`--act-think-end STR`. Requests can override with
+`"auto_continue_thinking": true|false`. Without the flag, an output-limited
+round closes its thinking block and returns `finish_reason=length`.
+
 ### Server
 
 ```sh
